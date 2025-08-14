@@ -3,8 +3,7 @@ name: Fetch markets snapshot
 on:
   workflow_dispatch: {}
   schedule:
-    # ดึงทุก 30 นาที (พอเหมาะกับ FNG ที่อัปเดตรายวัน และไม่หนัก CoinGecko)
-    - cron: "*/30 * * * *"
+    - cron: "*/5 * * * *"   # ทุก 5 นาที (UTC)
 
 permissions:
   contents: write
