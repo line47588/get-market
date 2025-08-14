@@ -1,9 +1,9 @@
-name: Fetch markets snapshot (every 5 minutes, reliably)
+name: Fetch markets snapshot
 
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 * * * *"   # เริ่มทุกชั่วโมง (UTC)
+    - cron: "2-59/5 * * * *"  # ทุก 5 นาทีที่นาที 02,07,12,...,57 (UTC)
 
 permissions:
   contents: write
@@ -15,42 +15,37 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 65
+    timeout-minutes: 20
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true  # ให้ GITHUB_TOKEN ใช้กับ push
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "18"
-          cache: "npm"
 
-      # ไม่มี deps ก็ไม่ต้องติดตั้ง เพื่อลดเวลารัน
-      # - name: Install deps
-      #   run: npm ci
-
-      - name: Hourly loop: fetch every 5 minutes (12x)
+      - name: Run fetcher
         env:
           GOLD_API_KEY: ${{ secrets.GOLD_API_KEY }}
+        run: npm run fetch
+
+      - name: Commit & push if changed
+        shell: bash
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          for i in $(seq 1 12); do
-            echo "=== Iteration $i/12 ==="
-            npm run fetch
+            git add data/latest.json
+            git commit -m "chore: update markets snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-            if [[ -n "$(git status --porcelain)" ]]; then
-              git add data/latest.json
-              git commit -m "chore: update markets snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-              git push
-            else
-              echo "No changes."
-            fi
-
-            if [[ $i -lt 12 ]]; then
-              echo "Sleeping 300s..."
-              sleep 300
-            fi
-          done
+            # กัน non-fast-forward ถ้ามี commit อื่นแทรก
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          else
+            echo "No changes."
+          fi
