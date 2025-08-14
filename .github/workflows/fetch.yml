@@ -1,9 +1,9 @@
-name: Fetch markets snapshot
+name: Fetch markets snapshot (every 5 minutes, reliably)
 
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "*/5 * * * *"  # ทุก 5 นาที (UTC)
+    - cron: "0 * * * *"   # เริ่มทุกชั่วโมง (UTC)
 
 permissions:
   contents: write
@@ -15,6 +15,7 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
+    timeout-minutes: 65
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -23,23 +24,33 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18"
+          cache: "npm"
 
-      - name: Install deps
-        run: npm ci || npm i
+      # ไม่มี deps ก็ไม่ต้องติดตั้ง เพื่อลดเวลารัน
+      # - name: Install deps
+      #   run: npm ci
 
-      - name: Run fetcher
+      - name: Hourly loop: fetch every 5 minutes (12x)
         env:
           GOLD_API_KEY: ${{ secrets.GOLD_API_KEY }}
-        run: npm run fetch
-
-      - name: Commit & push if changed
         run: |
-          if [[ -n "$(git status --porcelain)" ]]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add data/latest.json status.json || true
-            git commit -m "chore: update markets snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-            git push
-          else
-            echo "No changes."
-          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          for i in $(seq 1 12); do
+            echo "=== Iteration $i/12 ==="
+            npm run fetch
+
+            if [[ -n "$(git status --porcelain)" ]]; then
+              git add data/latest.json
+              git commit -m "chore: update markets snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              git push
+            else
+              echo "No changes."
+            fi
+
+            if [[ $i -lt 12 ]]; then
+              echo "Sleeping 300s..."
+              sleep 300
+            fi
+          done
