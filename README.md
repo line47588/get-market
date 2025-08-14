@@ -1,1 +1,1 @@
-# get-market
+# Thai Gold Cache (GitHub Pages + Actions)
