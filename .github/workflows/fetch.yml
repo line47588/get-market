@@ -1,0 +1,42 @@
+name: Fetch markets snapshot
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # ดึงทุก 30 นาที (พอเหมาะกับ FNG ที่อัปเดตรายวัน และไม่หนัก CoinGecko)
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install deps
+        run: npm ci || npm i
+
+      - name: Run fetcher
+        env:
+          GOLD_API_KEY: ${{ secrets.GOLD_API_KEY }}
+        run: npm run fetch
+
+      - name: Commit & push if changed
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add data/latest.json
+            git commit -m "chore: update markets snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git push
+          else
+            echo "No changes."
+          fi
