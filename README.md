@@ -1,1 +1,1 @@
-# Thai Gold Cache (GitHub Pages + Actions)
+# Market Price (GitHub Pages + Actions)
