@@ -1,11 +1,8 @@
 {
-  "name": "thai-gold-cache",
+  "name": "gh-fetch-markets",
   "version": "1.0.0",
-  "private": true,
+  "type": "module",
   "scripts": {
-    "scrape": "node scripts/scrape.js"
-  },
-  "dependencies": {
-    "cheerio": "^1.0.0-rc.12"
+    "fetch": "node scripts/fetch-markets.js"
   }
 }
