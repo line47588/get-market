@@ -1,10 +1,10 @@
 {
-  "ts": "2025-10-01T23:54:08.364Z",
-  "xauusd": 3864.899902,
-  "xagusd": 47.264,
+  "ts": "2025-10-02T00:58:05.463Z",
+  "xauusd": 3858.5,
+  "xagusd": 47.175999,
   "fng": {
-    "value": 49,
-    "classification": "Neutral"
+    "value": 64,
+    "classification": "Greed"
   },
-  "usd_thb": 32.43
+  "usd_thb": 32.41
 }
