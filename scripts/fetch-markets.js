@@ -1,5 +1,5 @@
 // Node 18+: มี fetch ให้ใช้ในตัว
-// รวม: XAUUSD/XAGUSD, Fear & Greed, USDTHB -> เขียนเป็น data/latest.json
+// รวม: XAUUSD/XAGUSD, Fear & Greed, USDTHB (Yahoo Finance) -> เขียนเป็น data/latest.json
 
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "fs";
 
@@ -11,8 +11,11 @@ function log(...args){ console.log("[fetch]", ...args); }
 async function safeJson(url, opts = {}, pick = (j)=>j) {
   try {
     const res = await fetch(url, {
-      // บาง API ชอบให้มี UA
-      headers: { "user-agent": "github-actions-fetch/1.0", ...(opts.headers||{}) },
+      // Yahoo Finance และ API อื่นๆ มักต้องการ User-Agent
+      headers: { 
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36", 
+        ...(opts.headers||{}) 
+      },
       ...opts
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
@@ -26,9 +29,7 @@ async function safeJson(url, opts = {}, pick = (j)=>j) {
 
 async function main() {
   // --- 1) Gold prices: XAUUSD/XAGUSD ---
-  // ปลายทางของคุณ: https://api.gold-api.com/price/XAU (และ XAG)
-  // ถ้าต้องใช้ API key ให้เพิ่ม header ด้านล่าง (ปล่อยว่างถ้าไม่ใช้)
-  const goldHeaders = {}; // เช่น { "x-api-key": process.env.GOLD_API_KEY }
+  const goldHeaders = {}; 
   const xau = await safeJson(
     "https://api.gold-api.com/price/XAU",
     { headers: goldHeaders },
@@ -41,7 +42,6 @@ async function main() {
   );
 
   // --- 2) Fear & Greed ---
-  // https://api.alternative.me/fng/
   const fng = await safeJson(
     "https://api.alternative.me/fng/",
     {},
@@ -51,22 +51,26 @@ async function main() {
     }
   );
 
-  // --- 3) USD -> THB (CoinGecko) ---
-  // https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=thb
+  // --- 3) USD -> THB (Yahoo Finance - Real-time Spot Rate) ---
+  // ดึงจาก Yahoo Finance จะได้เรทที่ตรงกับตลาด Forex ปัจจุบันที่สุด (เช่น 31.282)
   const usdthb = await safeJson(
-    "https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=thb",
+    "https://query1.finance.yahoo.com/v8/finance/chart/USDTHB=X?interval=1m&range=1d",
     {},
-    j => Number(j?.usd?.thb)
+    j => {
+      // ดึงค่า regularMarketPrice จากโครงสร้าง JSON ของ Yahoo
+      const price = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      return price ? Number(price) : null;
+    }
   );
 
   // เตรียมผลลัพธ์ใหม่
   const now = new Date().toISOString();
   let next = {
     ts: now,
-    xauusd: xau,     // ตัวเลข (เช่น 2401.23)
-    xagusd: xag,     // ตัวเลข
-    fng,             // { value, classification }
-    usd_thb: usdthb  // ตัวเลข (เช่น 32.24)
+    xauusd: xau,      // ตัวเลข
+    xagusd: xag,      // ตัวเลข
+    fng,              // { value, classification }
+    usd_thb: usdthb   // ตัวเลข (เรทจาก Yahoo Finance)
   };
 
   // ถ้าบางค่าเจ๊ง ให้ fallback ค่าเดิม (ถ้ามี)
@@ -75,7 +79,6 @@ async function main() {
   if (existsSync(OUT_FILE)) {
     try {
       const prev = JSON.parse(readFileSync(OUT_FILE, "utf-8"));
-      // ใช้ค่าก่อนหน้าเฉพาะ field ที่ดึงไม่สำเร็จ
       if (next.xauusd == null) next.xauusd = prev.xauusd ?? null;
       if (next.xagusd == null) next.xagusd = prev.xagusd ?? null;
       if (next.fng == null)    next.fng    = prev.fng ?? null;
