@@ -1,10 +1,10 @@
 {
-  "ts": "2026-02-12T23:47:14.736Z",
-  "xauusd": 4907.399902,
-  "xagusd": 74.688004,
+  "ts": "2026-02-13T00:59:46.731Z",
+  "xauusd": 4935,
+  "xagusd": 75.370003,
   "fng": {
-    "value": 5,
+    "value": 9,
     "classification": "Extreme Fear"
   },
-  "usd_thb": 31.09
+  "usd_thb": 31.05
 }
