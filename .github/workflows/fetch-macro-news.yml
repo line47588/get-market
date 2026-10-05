@@ -1,0 +1,51 @@
+name: Fetch macro + news
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "4-59/5 * * * *"  # ทุก 5 นาที (นาที 04,09,14,...) ไม่ชนกับ fetch.yml ที่นาที 02,07,...
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-macro-news
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Run fetcher
+        env:
+          MACRO_URL: ${{ secrets.MACRO_URL }}
+          NEWS_URL: ${{ secrets.NEWS_URL }}
+        run: node scripts/fetch-macro-news.js
+
+      - name: Commit & push if changed
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain data/macro.json data/news.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            git add data/macro.json data/news.json
+            git commit -m "chore: update macro + news $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          else
+            echo "No changes."
+          fi
