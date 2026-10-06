@@ -20,7 +20,7 @@ async function getJson(url, name, attempts = 4) {
   for (let i = 1; i <= attempts; i++) {
     try {
       const res = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "ESP32" },
+        headers: { Accept: "application/json", "User-Agent": url.includes("yahoo") ? "Mozilla/5.0" : "ESP32" },
         redirect: "follow",
       });
       const text = await res.text();
@@ -39,6 +39,25 @@ async function getJson(url, name, attempts = 4) {
   throw lastErr;
 }
 
+// S&P 500 and Nasdaq-100 for the CYD home page (Yahoo chart API, no key):
+// { spx, spx_pct, ndx, ndx_pct }, % against the previous close
+async function indexQuotes() {
+  const out = {};
+  for (const [key, sym] of [["spx", "%5EGSPC"], ["ndx", "%5ENDX"]]) {
+    try {
+      const j = await getJson(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=1d&interval=1d`, key, 2);
+      const m = j.chart.result[0].meta;
+      const prev = m.chartPreviousClose ?? m.previousClose;
+      if (!m.regularMarketPrice || !prev) throw new Error(`${key}: no price`);
+      out[key] = Math.round(m.regularMarketPrice * 100) / 100;
+      out[`${key}_pct`] = Math.round((m.regularMarketPrice / prev - 1) * 10000) / 100;
+    } catch (e) {
+      console.warn(e.message);
+    }
+  }
+  return out;
+}
+
 async function main() {
   if (!MACRO_URL || !NEWS_URL) throw new Error("MACRO_URL / NEWS_URL secrets are not set");
   await mkdir("data", { recursive: true });
@@ -48,6 +67,7 @@ async function main() {
   try {
     const macro = await getJson(MACRO_URL, "macro");
     if (macro.ok !== true) throw new Error("macro: ok != true");
+    Object.assign(macro.data, await indexQuotes());
     await writeFile("data/macro.json", JSON.stringify(macro) + "\n");
     console.log("macro ok");
   } catch (e) {
