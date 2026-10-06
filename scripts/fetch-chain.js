@@ -6,7 +6,7 @@
 //
 // {"t":"2026-10-06T08:00","height":917000,"hash_eh":950,"diff_t":"129.43",
 //  "fees":{"fastest":3,"halfHour":2,"hour":2,"economy":1,"minimum":1},
-//  "btc":85583.12,"btc_chg":-0.71}
+//  "btc":85583.12,"btc_chg":-0.71,"chart":[84210,...]}   (7-day price, 64 points)
 import { writeFile, mkdir, readFile } from "node:fs/promises";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -74,12 +74,21 @@ async function main() {
   } catch (e) {
     console.error("btc", e.message);
   }
+  try {
+    // 7-day price line for the crypto page sparkline, 64 evenly spaced points
+    const m = await get("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=7");
+    const p = m.prices.map((x) => x[1]);
+    const n = 64;
+    if (p.length >= n) out.chart = Array.from({ length: n }, (_, k) => Math.round(p[Math.round((k * (p.length - 1)) / (n - 1))]));
+  } catch (e) {
+    console.error("chart", e.message); // keep the previous chart
+  }
   if (ok === 0) process.exit(1); // keep the previous file
   out.t = new Date().toISOString().slice(0, 16);
   // fixed key order keeps the file small and diffs readable
-  const { t, height, hash_eh, diff_t, fees, btc, btc_chg } = out;
+  const { t, height, hash_eh, diff_t, fees, btc, btc_chg, chart } = out;
   await mkdir("data", { recursive: true });
-  await writeFile("data/chain.json", JSON.stringify({ t, height, hash_eh, diff_t, fees, btc, btc_chg }) + "\n");
+  await writeFile("data/chain.json", JSON.stringify({ t, height, hash_eh, diff_t, fees, btc, btc_chg, chart }) + "\n");
   console.log(`chain ok (${ok}/4)`, JSON.stringify(out));
 }
 
