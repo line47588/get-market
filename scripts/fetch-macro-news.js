@@ -49,6 +49,7 @@ async function indexQuotes() {
     ["ndx", "%5ENDX"], // Nasdaq-100
     ["dji", "%5EDJI"], // Dow Jones
     ["set", "%5ESET.BK"], // SET (Thailand)
+    ["rut", "%5ERUT"], // Russell 2000 (US small caps)
     ["n225", "%5EN225"], // Nikkei 225
     ["hsi", "%5EHSI"], // Hang Seng
     ["sse", "000001.SS"], // Shanghai Composite
