@@ -1,0 +1,49 @@
+name: Fetch lottery
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "*/15 7-10 1,2,16,17,30 * *" # วันออกรางวัล 14:00-17:59 น. ไทย ทุก 15 นาที
+    - cron: "17 0 * * *"                 # วันอื่นวันละครั้ง (07:17 น. ไทย)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-lotto
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run fetcher
+        run: node scripts/fetch-lotto.js
+
+      - name: Commit & push if changed
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain data/lotto)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            git add data/lotto
+            git commit -m "chore: update lottery $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          else
+            echo "No changes."
+          fi
