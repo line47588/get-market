@@ -43,7 +43,19 @@ async function getJson(url, name, attempts = 4) {
 // { spx, spx_pct, ndx, ndx_pct }, % against the previous close
 async function indexQuotes() {
   const out = {};
-  for (const [key, sym] of [["spx", "%5EGSPC"], ["ndx", "%5ENDX"]]) {
+  // US, Thailand, Asia, Europe: the CYD rotates them in one slot of the markets page
+  const indices = [
+    ["spx", "%5EGSPC"], // S&P 500
+    ["ndx", "%5ENDX"], // Nasdaq-100
+    ["dji", "%5EDJI"], // Dow Jones
+    ["set", "%5ESET.BK"], // SET (Thailand)
+    ["n225", "%5EN225"], // Nikkei 225
+    ["hsi", "%5EHSI"], // Hang Seng
+    ["sse", "000001.SS"], // Shanghai Composite
+    ["dax", "%5EGDAXI"], // DAX
+    ["ftse", "%5EFTSE"], // FTSE 100
+  ];
+  for (const [key, sym] of indices) {
     try {
       const j = await getJson(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=1d&interval=1d`, key, 2);
       const m = j.chart.result[0].meta;
