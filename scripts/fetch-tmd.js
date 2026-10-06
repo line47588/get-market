@@ -90,6 +90,21 @@ function reportFields(desc) {
   return out;
 }
 
+// "ทิศตะวันออกค่อนไปทางเหนือ ความเร็ว 7.4 กม./ชม." -> { wdir: 67.5, wspd: 7.4 }; "ลมสงบ" -> calm
+const WIND_DIR = [
+  ["เหนือค่อนไปทางตะวันออก", 22.5], ["ตะวันออกเฉียงเหนือ", 45], ["ตะวันออกค่อนไปทางเหนือ", 67.5],
+  ["ตะวันออกค่อนไปทางใต้", 112.5], ["ตะวันออกเฉียงใต้", 135], ["ใต้ค่อนไปทางตะวันออก", 157.5],
+  ["ใต้ค่อนไปทางตะวันตก", 202.5], ["ตะวันตกเฉียงใต้", 225], ["ตะวันตกค่อนไปทางใต้", 247.5],
+  ["ตะวันตกค่อนไปทางเหนือ", 292.5], ["ตะวันตกเฉียงเหนือ", 315], ["เหนือค่อนไปทางตะวันตก", 337.5],
+  ["ตะวันออก", 90], ["ตะวันตก", 270], ["เหนือ", 0], ["ใต้", 180], // single words last
+];
+function parseWind(text) {
+  if (!text || text.includes("สงบ")) return { wdir: null, wspd: 0 };
+  const dir = (text.match(/ทิศ(\S+)/) || [])[1] || "";
+  const hit = WIND_DIR.find(([name]) => dir === name) || WIND_DIR.find(([name]) => dir.startsWith(name));
+  return { wdir: hit ? hit[1] : null, wspd: num((text.match(/ความเร็ว\s*([\d.]+)/) || [])[1] ?? "") };
+}
+
 async function stationReport(wmo) {
   const xml = await getText(REPORT(wmo), 2);
   const item = tag(xml, "item");
@@ -109,6 +124,7 @@ async function stationReport(wmo) {
     rh: num(val("ความชื้น")),
     p: num(val("ความกด")),
     wind: val("ทิศทางลม").replace(/\s+/g, " "),
+    ...parseWind(val("ทิศทางลม")),
     vis: num(val("ทัศนวิสัย")),
     wx: val("ลักษณะอากาศ"),
     rain: num(val("ฝนสะสม")),
@@ -242,7 +258,7 @@ async function main() {
     await writeFile(`data/tmd/st/${s.WmoCode}.json`, JSON.stringify({
       id: s.WmoCode, name, prov,
       date: rep.date, time: rep.time,
-      t: rep.t, rh: rep.rh, p: rep.p, wind: rep.wind, vis: rep.vis, wx: rep.wx, rain: rep.rain,
+      t: rep.t, rh: rep.rh, p: rep.p, wind: rep.wind, wdir: rep.wdir, wspd: rep.wspd, vis: rep.vis, wx: rep.wx, rain: rep.rain,
       sunrise: rep.sunrise, sunset: rep.sunset,
       region: reg && { id: reg.id, name: reg.name, th: reg.th, tmin: reg.tmin, tmax: reg.tmax },
       cap,
