@@ -1,0 +1,61 @@
+name: Fetch TMD weather
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "11,41 * * * *"  # ทุก 30 นาที (นาที 11 และ 41) ไม่ชนกับ workflow อื่น
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-tmd
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # tmd.go.th does not send its intermediate certificate, so Node rejects it.
+      # Download the issuer named in the server certificate (AIA) and trust it.
+      - name: Trust TMD intermediate certificate
+        shell: bash
+        run: |
+          AIA=$(echo | openssl s_client -connect www.tmd.go.th:443 -servername www.tmd.go.th 2>/dev/null \
+            | openssl x509 -noout -ext authorityInfoAccess 2>/dev/null \
+            | sed -n 's/.*CA Issuers - URI:\(.*\)/\1/p' | head -1)
+          echo "issuer: $AIA"
+          curl -s "$AIA" -o issuer.crt
+          openssl x509 -inform der -in issuer.crt -out "$RUNNER_TEMP/tmd-ca.pem" 2>/dev/null || cp issuer.crt "$RUNNER_TEMP/tmd-ca.pem"
+          echo "NODE_EXTRA_CA_CERTS=$RUNNER_TEMP/tmd-ca.pem" >> "$GITHUB_ENV"
+
+      - name: Run fetcher
+        run: node scripts/fetch-tmd.js
+
+      - name: Commit & push if changed
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain data/tmd)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            git add data/tmd
+            git commit -m "chore: update TMD weather $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          else
+            echo "No changes."
+          fi
