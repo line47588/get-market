@@ -1,0 +1,48 @@
+name: Fetch flood + quakes
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "21,51 * * * *"  # ทุก 30 นาที (นาที 21 และ 51) ไม่ชนกับ workflow อื่น
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-flood
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run fetcher
+        run: node scripts/fetch-flood.js
+
+      - name: Commit & push if changed
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain data/alerts)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            git add data/alerts
+            git commit -m "chore: update flood + quakes $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          else
+            echo "No changes."
+          fi
