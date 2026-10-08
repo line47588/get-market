@@ -1,3 +1,4 @@
 # nerdminer-activations
 # One chip ID per line (shown on the lock screen and in the serial log as [ACT] chip ...).
 # Text after # is a note. Keep the first line exactly as it is.
+1479976
