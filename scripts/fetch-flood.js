@@ -1,29 +1,51 @@
-// Builds data/alerts/flood.txt for the CYD "FLOOD & QUAKE" page: river water levels
-// and dam storage from ThaiWater (api-v3.thaiwater.net, several MB of JSON) and the
-// latest earthquakes from TMD (HTTPS only). The board streams this file over plain
-// HTTP (raw.githack.com) one line at a time and keeps only what is near it, so the
-// whole country fits without using its heap.
+// Builds data/quotes.json for the CYD crypto and US markets pages: the top coins
+// (CoinGecko) and stock quotes (Yahoo chart API, no key). Binance and Finnhub are
+// HTTPS-only and the ESP32 (no PSRAM) has heap for at most one TLS session, less
+// while the radio plays, so the board reads this small file over plain HTTP
+// (raw.githack.com) and asks Finnhub only for symbols that are not in it.
 //
-// One record per line, fields separated by "|":
-//   T|<generated, ISO time>
-//   S|<stations at level 5 (overflow)>|<level 4 (high)>|<stations reporting>
-//   W|lat|lon|name|province|level_msl|previous_msl|percent_of_bank|situation 1-5|time
-//   D|lat|lon|name|province|storage_percent|inflow_mcm|released_mcm|date
-//   Q|magnitude|lat|lon|depth_km|time_utc|title|where
-import { writeFile, mkdir } from "node:fs/promises";
+// {"t":"2026-10-09T05:00","top":[["ETH",2510.5,1.2],...],
+//  "q":{"QQQ":[512.3,0.45],"BINANCE:BTCUSDT":[82420,0.37],...}}   [price, % change]
+import { writeFile, mkdir, readFile } from "node:fs/promises";
 
-const WATERLEVEL = "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load";
-const MAIN = "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/thailand_main";
-const QUAKES = "https://earthquake.tmd.go.th/feed/rss_tmd.xml";
+// coin symbol shown on the board -> CoinGecko id (the board's fixed list)
+const COINS = [
+  ["ETH", "ethereum"],
+  ["BNB", "binancecoin"],
+  ["SOL", "solana"],
+  ["XRP", "ripple"],
+  ["DOGE", "dogecoin"],
+  ["ADA", "cardano"],
+];
+
+// stock symbol as typed in the board's settings (upper case) -> Yahoo symbol.
+// The board's default list plus its tech-score symbols; add your own here.
+const STOCKS = {
+  QQQ: "QQQ",
+  NVDA: "NVDA",
+  TSLA: "TSLA",
+  AMD: "AMD",
+  AAPL: "AAPL",
+  MSFT: "MSFT",
+  GOOGL: "GOOGL",
+  AMZN: "AMZN",
+  META: "META",
+  AVGO: "AVGO",
+  PLTR: "PLTR",
+  SLV: "SLV",
+  GLD: "GLD",
+  SPY: "SPY",
+  "BINANCE:BTCUSDT": "BTC-USD",
+};
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function getText(url, attempts = 3) {
+async function get(url, attempts = 3) {
   let last;
   for (let i = 1; i <= attempts; i++) {
     try {
-      const res = await fetch(url, { headers: { "User-Agent": "cyd-flood/1.0" } });
+      const res = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.text();
+      return await res.json();
     } catch (e) {
       last = e;
       if (i < attempts) await sleep(2000 * i);
@@ -32,80 +54,49 @@ async function getText(url, attempts = 3) {
   throw new Error(`${url}: ${last.message}`);
 }
 
-// no "|" or line breaks inside a field
-const f = (v) => (v === null || v === undefined ? "" : String(v).replace(/[|\r\n]+/g, " ").trim());
-const n2 = (v) => (v === null || v === undefined || v === "" || isNaN(Number(v)) ? "" : String(Math.round(Number(v) * 100) / 100));
-const ll = (v) => (v === null || v === undefined || isNaN(Number(v)) ? "" : Number(v).toFixed(4));
-
-async function waterLines() {
-  const d = JSON.parse(await getText(WATERLEVEL));
-  const rows = (d.waterlevel_data && d.waterlevel_data.data) || [];
-  const lines = [];
-  let l5 = 0, l4 = 0;
-  for (const r of rows) {
-    const st = r.station || {};
-    const lat = st.tele_station_lat, lon = st.tele_station_long;
-    if (!lat || !lon || r.storage_percent === null || r.storage_percent === undefined) continue;
-    const sit = Number(r.situation_level) || 0;
-    if (sit === 5) l5++;
-    if (sit === 4) l4++;
-    lines.push(["W", ll(lat), ll(lon), f(st.tele_station_name && st.tele_station_name.th),
-      f(r.geocode && r.geocode.province_name && r.geocode.province_name.th),
-      n2(r.waterlevel_msl), n2(r.waterlevel_msl_previous), n2(r.storage_percent), sit,
-      f((r.waterlevel_datetime || "").slice(11, 16))].join("|"));
-  }
-  return { lines, summary: `S|${l5}|${l4}|${lines.length}` };
-}
-
-async function damLines() {
-  const d = JSON.parse(await getText(MAIN));
-  const dams = (d.dam && d.dam.data && (d.dam.data.data || d.dam.data)) || [];
-  return dams.filter((r) => r.dam && r.dam.dam_lat).map((r) => ["D", ll(r.dam.dam_lat), ll(r.dam.dam_long),
-    f(r.dam.dam_name && r.dam.dam_name.th), f(r.geocode && r.geocode.province_name && r.geocode.province_name.th),
-    n2(r.dam_storage_percent), n2(r.dam_inflow), n2(r.dam_released), f(r.dam_date)].join("|"));
-}
-
-async function quakeLines() {
-  const xml = await getText(QUAKES);
-  const tag = (s, t) => ((s.match(new RegExp(`<${t}>([\\s\\S]*?)</${t}>`)) || [])[1] || "").trim();
-  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map((m) => {
-    const it = m[1];
-    const title = tag(it, "title").replace(/\s*\([^)]*\)\s*$/, ""); // "ประเทศเมียนมา (Myanmar)" -> Thai only
-    return ["Q", n2(tag(it, "tmd:magnitude")), ll(tag(it, "geo:lat")), ll(tag(it, "geo:long")), n2(tag(it, "tmd:depth")),
-      f(tag(it, "tmd:time").replace(" UTC", "")), f(title), f(tag(it, "comments"))].join("|");
-  });
-}
+const r2 = (x) => Math.round(x * 100) / 100;
+const price = (x) => (x >= 1 ? r2(x) : Math.round(x * 10000) / 10000);
 
 async function main() {
-  await mkdir("data/alerts", { recursive: true });
-  const out = [`T|${new Date().toISOString().slice(0, 16)}`];
+  // start from the previous file so a failed source keeps its last value
+  let out = {};
+  try {
+    out = JSON.parse(await readFile("data/quotes.json", "utf8"));
+  } catch {}
+  out.q = out.q || {};
   let ok = 0;
+
   try {
-    const w = await waterLines();
-    out.push(w.summary, ...w.lines);
-    ok++;
-    console.log(`water stations ${w.lines.length}`);
+    const ids = COINS.map((c) => c[1]).join(",");
+    const j = await get(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+    const top = COINS.filter(([, id]) => j[id] && j[id].usd).map(([sym, id]) => [sym, price(j[id].usd), r2(j[id].usd_24h_change || 0)]);
+    if (top.length) {
+      out.top = top;
+      ok++;
+    }
   } catch (e) {
-    console.error("water", e.message);
+    console.error("coins", e.message);
   }
-  try {
-    const d = await damLines();
-    out.push(...d);
-    ok++;
-    console.log(`dams ${d.length}`);
-  } catch (e) {
-    console.error("dams", e.message);
+
+  for (const [key, sym] of Object.entries(STOCKS)) {
+    try {
+      const j = await get(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=1d&interval=1d`, 2);
+      const m = j.chart.result[0].meta;
+      const prev = m.chartPreviousClose ?? m.previousClose;
+      if (!m.regularMarketPrice || !prev) throw new Error("no price");
+      out.q[key] = [price(m.regularMarketPrice), r2((m.regularMarketPrice / prev - 1) * 100)];
+      ok++;
+    } catch (e) {
+      console.warn(key, e.message);
+    }
   }
-  try {
-    const q = await quakeLines();
-    out.push(...q);
-    ok++;
-    console.log(`quakes ${q.length}`);
-  } catch (e) {
-    console.error("quakes", e.message);
-  }
+
   if (ok === 0) process.exit(1); // keep the previous file
-  await writeFile("data/alerts/flood.txt", out.join("\n") + "\n");
+  out.t = new Date().toISOString().slice(0, 16);
+  const { t, top, q } = out;
+  await mkdir("data", { recursive: true });
+  await writeFile("data/quotes.json", JSON.stringify({ t, top, q }) + "\n");
+  console.log(`quotes ok (${ok})`, JSON.stringify(out));
 }
 
 main().catch((e) => {
