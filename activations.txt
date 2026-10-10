@@ -3,7 +3,7 @@
 # Text after # is a note. Keep the first line exactly as it is.
 6118472 #2.0.0-rc.1 (รุ่น 2USB / TPM408) http://192.168.1.192
 3930620 #2.0.0-rc.1 (รุ่น HW-458) http://192.168.1.44
+1464532 #
 1479976
-1464532
 6141244
 
