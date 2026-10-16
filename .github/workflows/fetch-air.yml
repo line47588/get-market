@@ -31,6 +31,8 @@ jobs:
           node-version: "20"
 
       - name: Run fetcher
+        env:
+          WAQI_TOKEN: ${{ secrets.WAQI_TOKEN }} # the world's worst places; without it only Thailand
         run: node scripts/fetch-air.js
 
       - name: Commit & push if changed

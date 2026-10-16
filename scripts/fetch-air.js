@@ -111,6 +111,59 @@ function province(st) {
   return clean(parts[parts.length - 1]).replace(/^จ\.\s*/, "").replace(/^จังหวัด/, "") || "-";
 }
 
+// ---- the worst places in the world (WAQI, US AQI), written as "W|aqi|place, country".
+// WAQI's map API returns a sample of the stations in a box, so the world is asked in
+// boxes (~3000 official stations). The token is the WAQI_TOKEN secret; without it the
+// world lines are left out. Readings over 3 h old or at the 500 cap (a stuck sensor) are
+// skipped, and one place per ~1 degree cell is kept so one smoky city does not fill all.
+const WAQI = "https://api.waqi.info/map/bounds/";
+const UA = { "User-Agent": "cyd-air/1.0 (+https://github.com/line47588/get-market)" };
+const ascii = (s) => String(s || "").replace(/\([^)]*\)/g, " ").replace(/[^\x20-\x7e]/g, " ").replace(/\s+/g, " ").trim();
+async function worldWorst(n = 3) {
+  const token = process.env.WAQI_TOKEN;
+  if (!token) return [];
+  const all = new Map();
+  for (let la = -60; la < 75; la += 45)
+    for (let lo = -180; lo < 180; lo += 60) {
+      const j = JSON.parse((await download(`${WAQI}?latlng=${la},${lo},${la + 45},${lo + 60}&networks=official&token=${token}`)).toString());
+      if (j.status !== "ok") throw new Error(`WAQI ${j.status}: ${j.data}`);
+      for (const x of j.data || []) all.set(x.uid, x);
+    }
+  const now = Date.now();
+  const ok = [...all.values()].filter((x) => {
+    const a = parseInt(x.aqi, 10), t = Date.parse(x.station && x.station.time);
+    return a > 0 && a < 500 && Number.isFinite(t) && now - t < STALE_H * 3600e3;
+  });
+  ok.sort((a, b) => parseInt(b.aqi, 10) - parseInt(a.aqi, 10));
+  const cells = new Set(), top = [];
+  for (const x of ok) {
+    const cell = `${Math.round(x.lat)},${Math.round(x.lon)}`;
+    if (cells.has(cell)) continue;
+    cells.add(cell);
+    top.push(x);
+    if (top.length >= n) break;
+  }
+  const out = [];
+  for (const x of top) {
+    // "Station, City, Country" usually; Chinese and some other names have no country:
+    // OpenStreetMap's reverse geocoder (one request a second, as its policy asks)
+    let place = ascii(x.station.name);
+    const parts = place.split(",").map((s) => s.trim()).filter(Boolean);
+    try {
+      await sleep(1100);
+      const r = JSON.parse((await download(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&accept-language=en&lat=${x.lat}&lon=${x.lon}`, { headers: UA })).toString());
+      const a = r.address || {};
+      const city = ascii(a.city || a.town || a.county || a.state || parts[parts.length - 2] || parts[0]);
+      if (a.country) place = `${city}, ${ascii(a.country)}`;
+    } catch (e) {
+      place = parts.slice(-2).join(", ");
+    }
+    out.push({ aqi: parseInt(x.aqi, 10), place: cut(place, 34) });
+  }
+  console.log(`world: ${all.size} stations, ${ok.length} fresh, worst ${out.map((w) => w.aqi + " " + w.place).join(" / ")}`);
+  return out;
+}
+
 async function main() {
   const j = await get(URL);
   const stations = (j && j.stations) || [];
@@ -145,6 +198,12 @@ async function main() {
   for (const r of ranked.slice(0, 3)) out.push(["T", r.aqi, r.pm25, r.prov, r.name].join("|"));
   for (const r of fresh)
     out.push(["S", r.lat.toFixed(4), r.lon.toFixed(4), r.aqi, r.pm25, r.pm10, r.o3, r.when.slice(11, 16), r.prov, r.name].join("|"));
+
+  try {
+    for (const w of await worldWorst()) out.push(["W", w.aqi, w.place].join("|"));
+  } catch (e) {
+    console.error("world:", e.message); // the Thai part still goes out
+  }
 
   await mkdir("data/air", { recursive: true });
   await writeFile("data/air/latest.txt", out.join("\n") + "\n", "utf8");
