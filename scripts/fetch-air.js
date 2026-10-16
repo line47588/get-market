@@ -9,7 +9,7 @@
 //   S|lat|lon|aqi|pm25|pm10|o3|time|province|name|id   every station with a reading
 //   W|aqi|place, country        the worst three in the world (WAQI, US AQI)
 //   H|count|from|to             hotspots in Thailand in the last 24 h (NASA FIRMS, S-NPP)
-//   P|count|province            the three provinces with the most of them
+//   P|count|province            the six provinces with the most of them
 // pm10 / o3 are -1 where the station does not measure them.
 // Also data/air/h/<id>.txt for each station: "id|first hour|pm25,pm25,..." (the last 24
 // hourly PM2.5 values, -1 for a missing hour) for the page's 24 h chart.
@@ -260,7 +260,7 @@ async function hotspots() {
     if (when < from) from = when;
     if (when > to) to = when;
   }
-  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
   console.log(`hotspots: ${total} in Thailand, top ${top.map(([p, n]) => p + " " + n).join(", ")}`);
   return { total, from: total ? from : "-", to: total ? to : "-", top };
 }
