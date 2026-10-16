@@ -6,8 +6,13 @@
 //   U|date time|stations        the newest reading (Thai time) and how many stations
 //   C|n                         stations at AQI 101 or more (orange and worse)
 //   T|aqi|pm25|province|name    the worst three, worst first
-//   S|lat|lon|aqi|pm25|pm10|o3|time|province|name   every station with a reading
+//   S|lat|lon|aqi|pm25|pm10|o3|time|province|name|id   every station with a reading
+//   W|aqi|place, country        the worst three in the world (WAQI, US AQI)
+//   H|count|from|to             hotspots in Thailand in the last 24 h (NASA FIRMS, S-NPP)
+//   P|count|province            the three provinces with the most of them
 // pm10 / o3 are -1 where the station does not measure them.
+// Also data/air/h/<id>.txt for each station: "id|first hour|pm25,pm25,..." (the last 24
+// hourly PM2.5 values, -1 for a missing hour) for the page's 24 h chart.
 import { writeFile, mkdir } from "node:fs/promises";
 import https from "node:https";
 import http from "node:http";
@@ -16,6 +21,7 @@ import { X509Certificate } from "node:crypto";
 
 const URL = "https://air4thai.pcd.go.th/services/getNewAQI_JSON.php";
 const STALE_H = 3; // readings older than this behind the newest one are left out
+let caPem = null; // the server's missing intermediates, once found by get()
 const NAME_MAX = 30; // characters (Thai combining marks included) the screen has room for
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -73,7 +79,7 @@ async function missingIntermediate(host) {
 }
 
 async function get(url, attempts = 3) {
-  let last, ca;
+  let last, ca = caPem;
   for (let i = 1; i <= attempts; i++) {
     try {
       const body = await download(url, ca ? { ca: [...tls.rootCertificates, ...ca] } : {});
@@ -81,7 +87,7 @@ async function get(url, attempts = 3) {
     } catch (e) {
       last = e;
       if (!ca && /UNABLE_TO_VERIFY|unable to verify|issuer/i.test(`${e.code} ${e.message}`)) {
-        ca = await missingIntermediate(new globalThis.URL(url).hostname);
+        ca = caPem = await missingIntermediate(new globalThis.URL(url).hostname);
         console.log(`added ${ca.length} certificate(s) the server leaves out`);
         i--; // this retry does not count
         continue;
@@ -164,6 +170,101 @@ async function worldWorst(n = 3) {
   return out;
 }
 
+// ---- 24 h of hourly PM2.5 for every station, one small file each (the board reads only
+// its own station's). Air4Thai takes many stations in one request.
+const HIST = "https://air4thai.pcd.go.th/forweb/getHistoryData.php";
+async function histories(ids) {
+  const ymd = (d) => d.toISOString().slice(0, 10);
+  const now = new Date(Date.now() + 7 * 3600e3); // Thai time as a "UTC" date
+  const from = new Date(now.getTime() - 26 * 3600e3);
+  let written = 0;
+  for (let i = 0; i < ids.length; i += 40) {
+    const chunk = ids.slice(i, i + 40);
+    const url = `${HIST}?stationID=${chunk.join(",")}&param=PM25&type=hr&sdate=${ymd(from)}&edate=${ymd(now)}&stime=00&etime=23`;
+    const j = await get(url);
+    for (const st of (j && j.stations) || []) {
+      const byHour = new Map();
+      for (const d of st.data || []) byHour.set(String(d.DATETIMEDATA).slice(0, 13), num(d.PM25));
+      // the last 24 hours that have passed, oldest first
+      const hours = [];
+      const last = new Date(Math.floor(now.getTime() / 3600e3) * 3600e3 - 3600e3);
+      for (let k = 23; k >= 0; k--) {
+        const t = new Date(last.getTime() - k * 3600e3).toISOString().slice(0, 13).replace("T", " ");
+        hours.push(byHour.has(t) ? byHour.get(t) : -1);
+      }
+      if (hours.every((v) => v < 0)) continue;
+      const first = new Date(last.getTime() - 23 * 3600e3).toISOString().slice(0, 13).replace("T", " ") + ":00";
+      await writeFile(`data/air/h/${clean(st.stationID)}.txt`, `${clean(st.stationID)}|${first}|${hours.map((v) => (v < 0 ? -1 : Math.round(v * 10) / 10)).join(",")}\n`, "utf8");
+      written++;
+    }
+  }
+  console.log(`history: ${written} station files`);
+}
+
+// ---- hotspots (fires) in Thailand in the last 24 h: NASA FIRMS' public S-NPP VIIRS file
+// for Southeast Asia (no key), each point placed in a province by the province shapes.
+const FIRMS = "https://firms.modaps.eosdis.nasa.gov/data/active_fire/suomi-npp-viirs-c2/csv/SUOMI_VIIRS_C2_SouthEast_Asia_24h.csv";
+const PROVINCES = "https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json";
+const PROV_TH = {
+  "Amnat Charoen": "อำนาจเจริญ", "Ang Thong": "อ่างทอง", "Bangkok Metropolis": "กรุงเทพฯ", "Bueng Kan": "บึงกาฬ",
+  "Buri Ram": "บุรีรัมย์", "Chachoengsao": "ฉะเชิงเทรา", "Chai Nat": "ชัยนาท", "Chaiyaphum": "ชัยภูมิ",
+  "Chanthaburi": "จันทบุรี", "Chiang Mai": "เชียงใหม่", "Chiang Rai": "เชียงราย", "Chon Buri": "ชลบุรี",
+  "Chumphon": "ชุมพร", "Kalasin": "กาฬสินธุ์", "Kamphaeng Phet": "กำแพงเพชร", "Kanchanaburi": "กาญจนบุรี",
+  "Khon Kaen": "ขอนแก่น", "Krabi": "กระบี่", "Lampang": "ลำปาง", "Lamphun": "ลำพูน", "Loei": "เลย",
+  "Lop Buri": "ลพบุรี", "Mae Hong Son": "แม่ฮ่องสอน", "Maha Sarakham": "มหาสารคาม", "Mukdahan": "มุกดาหาร",
+  "Nakhon Nayok": "นครนายก", "Nakhon Pathom": "นครปฐม", "Nakhon Phanom": "นครพนม",
+  "Nakhon Ratchasima": "นครราชสีมา", "Nakhon Sawan": "นครสวรรค์", "Nakhon Si Thammarat": "นครศรีธรรมราช",
+  "Nan": "น่าน", "Narathiwat": "นราธิวาส", "Nong Bua Lam Phu": "หนองบัวลำภู", "Nong Khai": "หนองคาย",
+  "Nonthaburi": "นนทบุรี", "Pathum Thani": "ปทุมธานี", "Pattani": "ปัตตานี", "Phangnga": "พังงา",
+  "Phatthalung": "พัทลุง", "Phayao": "พะเยา", "Phetchabun": "เพชรบูรณ์", "Phetchaburi": "เพชรบุรี",
+  "Phichit": "พิจิตร", "Phitsanulok": "พิษณุโลก", "Phra Nakhon Si Ayutthaya": "พระนครศรีอยุธยา", "Phrae": "แพร่",
+  "Phuket": "ภูเก็ต", "Prachin Buri": "ปราจีนบุรี", "Prachuap Khiri Khan": "ประจวบคีรีขันธ์", "Ranong": "ระนอง",
+  "Ratchaburi": "ราชบุรี", "Rayong": "ระยอง", "Roi Et": "ร้อยเอ็ด", "Sa Kaeo": "สระแก้ว", "Sakon Nakhon": "สกลนคร",
+  "Samut Prakan": "สมุทรปราการ", "Samut Sakhon": "สมุทรสาคร", "Samut Songkhram": "สมุทรสงคราม",
+  "Saraburi": "สระบุรี", "Satun": "สตูล", "Si Sa Ket": "ศรีสะเกษ", "Sing Buri": "สิงห์บุรี", "Songkhla": "สงขลา",
+  "Sukhothai": "สุโขทัย", "Suphan Buri": "สุพรรณบุรี", "Surat Thani": "สุราษฎร์ธานี", "Surin": "สุรินทร์",
+  "Tak": "ตาก", "Trang": "ตรัง", "Trat": "ตราด", "Ubon Ratchathani": "อุบลราชธานี", "Udon Thani": "อุดรธานี",
+  "Uthai Thani": "อุทัยธานี", "Uttaradit": "อุตรดิตถ์", "Yala": "ยะลา", "Yasothon": "ยโสธร",
+};
+function inRing(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+async function hotspots() {
+  const geo = JSON.parse((await download(PROVINCES, { headers: UA })).toString());
+  const provs = geo.features.map((f) => {
+    const polys = f.geometry.type === "MultiPolygon" ? f.geometry.coordinates : [f.geometry.coordinates];
+    let x0 = 180, y0 = 90, x1 = -180, y1 = -90;
+    for (const p of polys) for (const [x, y] of p[0]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    return { name: PROV_TH[f.properties.name] || f.properties.name, polys, box: [x0, y0, x1, y1] };
+  });
+  const csv = (await download(FIRMS, { headers: UA })).toString().trim().split("\n");
+  const head = csv.shift().split(",");
+  const iLat = head.indexOf("latitude"), iLon = head.indexOf("longitude"), iDate = head.indexOf("acq_date"), iTime = head.indexOf("acq_time");
+  const counts = new Map();
+  let total = 0, from = "9", to = "0";
+  for (const line of csv) {
+    const c = line.split(",");
+    const y = parseFloat(c[iLat]), x = parseFloat(c[iLon]);
+    if (!(y > 5 && y < 21 && x > 97 && x < 106)) continue;
+    const prov = provs.find((p) => x >= p.box[0] && x <= p.box[2] && y >= p.box[1] && y <= p.box[3] &&
+      p.polys.some((poly) => inRing(x, y, poly[0]) && !poly.slice(1).some((hole) => inRing(x, y, hole))));
+    if (!prov) continue; // a neighbour country or the sea
+    total++;
+    counts.set(prov.name, (counts.get(prov.name) || 0) + 1);
+    const when = `${c[iDate]} ${String(c[iTime]).padStart(4, "0")}`;
+    if (when < from) from = when;
+    if (when > to) to = when;
+  }
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  console.log(`hotspots: ${total} in Thailand, top ${top.map(([p, n]) => p + " " + n).join(", ")}`);
+  return { total, from: total ? from : "-", to: total ? to : "-", top };
+}
+
 async function main() {
   const j = await get(URL);
   const stations = (j && j.stations) || [];
@@ -184,6 +285,7 @@ async function main() {
       prov: province(st),
       name: cut(clean(st.nameTH), NAME_MAX),
       type: st.stationType,
+      id: clean(st.stationID),
     });
   }
   if (!rows.length) throw new Error("no readings");
@@ -197,7 +299,7 @@ async function main() {
   out.push(["C", fresh.filter((r) => r.aqi >= 101).length].join("|"));
   for (const r of ranked.slice(0, 3)) out.push(["T", r.aqi, r.pm25, r.prov, r.name].join("|"));
   for (const r of fresh)
-    out.push(["S", r.lat.toFixed(4), r.lon.toFixed(4), r.aqi, r.pm25, r.pm10, r.o3, r.when.slice(11, 16), r.prov, r.name].join("|"));
+    out.push(["S", r.lat.toFixed(4), r.lon.toFixed(4), r.aqi, r.pm25, r.pm10, r.o3, r.when.slice(11, 16), r.prov, r.name, r.id].join("|"));
 
   try {
     for (const w of await worldWorst()) out.push(["W", w.aqi, w.place].join("|"));
@@ -205,8 +307,21 @@ async function main() {
     console.error("world:", e.message); // the Thai part still goes out
   }
 
-  await mkdir("data/air", { recursive: true });
+  try {
+    const h = await hotspots();
+    out.push(["H", h.total, h.from, h.to].join("|"));
+    for (const [prov, n] of h.top) out.push(["P", n, prov].join("|"));
+  } catch (e) {
+    console.error("hotspots:", e.message);
+  }
+
+  await mkdir("data/air/h", { recursive: true });
   await writeFile("data/air/latest.txt", out.join("\n") + "\n", "utf8");
+  try {
+    await histories(fresh.map((r) => r.id).filter(Boolean));
+  } catch (e) {
+    console.error("history:", e.message);
+  }
   console.log(`newest ${newest}, ${fresh.length}/${rows.length} fresh stations, worst ${ranked[0] && ranked[0].aqi}`);
 }
 
