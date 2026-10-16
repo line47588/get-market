@@ -103,7 +103,7 @@ function cut(s, max) {
   if (chars.length <= max) return s;
   let n = max;
   while (n > 0 && /[ัิ-ฺ็-๎]/.test(chars[n])) n--;
-  return chars.slice(0, n).join("").trim() + "…";
+  return chars.slice(0, n).join("").trim() + ".."; // the board's Thai font has no "…"
 }
 function province(st) {
   if (st.stationType === "BKK") return "กรุงเทพฯ";
