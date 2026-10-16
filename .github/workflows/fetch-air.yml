@@ -1,0 +1,48 @@
+name: Fetch air quality
+
+# data/air/latest.txt for the CYD "AIR QUALITY" page: every Air4Thai (Pollution Control
+# Department) station and the worst three in Thailand. Air4Thai updates hourly; two odd
+# minutes an hour (GitHub drops runs at :00/:15/:30/:45 when it is busy).
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "13,43 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-air
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run fetcher
+        run: node scripts/fetch-air.js
+
+      - name: Commit & push if changed
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain data/air)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add data/air
+            git commit -m "chore: update air quality $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          else
+            echo "No changes."
+          fi
