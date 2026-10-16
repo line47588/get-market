@@ -7,7 +7,9 @@
 //   C|n                         stations at AQI 101 or more (orange and worse)
 //   T|aqi|pm25|province|name    the worst three, worst first
 //   S|lat|lon|aqi|pm25|pm10|o3|time|province|name|id   every station with a reading
+//   B|aqi|pm25|province|name    the best three in Thailand, best first
 //   W|aqi|place, country        the worst three in the world (WAQI, US AQI)
+//   G|aqi|place, country        the best three in the world
 //   H|count|from|to             hotspots in Thailand in the last 24 h (NASA FIRMS, S-NPP)
 //   P|count|province            the six provinces with the most of them
 // pm10 / o3 are -1 where the station does not measure them.
@@ -111,6 +113,17 @@ function cut(s, max) {
   while (n > 0 && /[ัิ-ฺ็-๎]/.test(chars[n])) n--;
   return chars.slice(0, n).join("").trim() + ".."; // the board's Thai font has no "…"
 }
+// the usual Thai abbreviations, so a station name fits the screen
+const SHORT = [
+  [/สำนักงานสิ่งแวดล้อมภาคที่\s*/g, "สสภ."], [/สำนักงาน/g, "สนง."], [/โรงพยาบาลส่งเสริมสุขภาพตำบล/g, "รพ.สต."],
+  [/โรงพยาบาล/g, "รพ."], [/โรงเรียน/g, "รร."], [/มหาวิทยาลัย/g, "ม."], [/วิทยาเขต/g, "วข."],
+  [/องค์การบริหารส่วนตำบล/g, "อบต."], [/องค์การบริหารส่วนจังหวัด/g, "อบจ."], [/เทศบาลนคร/g, "ทน."],
+  [/เทศบาลเมือง/g, "ทม."], [/เทศบาลตำบล/g, "ทต."], [/สาธารณสุขอำเภอ/g, "สสอ."], [/ศูนย์วิจัย/g, "ศวจ."],
+  [/การไฟฟ้าฝ่ายผลิต(แห่งประเทศไทย)?/g, "กฟผ."], [/จังหวัด/g, "จ."], [/อำเภอ/g, "อ."], [/ตำบล/g, "ต."],
+  [/กรุงเทพมหานคร/g, "กทม."], [/สนามกีฬากลาง/g, "สนามกีฬา"],
+];
+const shorten = (name) => SHORT.reduce((s, [re, to]) => s.replace(re, to), name).replace(/\s+/g, " ").trim();
+
 function province(st) {
   if (st.stationType === "BKK") return "กรุงเทพฯ";
   const parts = clean(st.areaTH).split(",");
@@ -124,10 +137,13 @@ function province(st) {
 // skipped, and one place per ~1 degree cell is kept so one smoky city does not fill all.
 const WAQI = "https://api.waqi.info/map/bounds/";
 const UA = { "User-Agent": "cyd-air/1.0 (+https://github.com/line47588/get-market)" };
-const ascii = (s) => String(s || "").replace(/\([^)]*\)/g, " ").replace(/[^\x20-\x7e]/g, " ").replace(/\s+/g, " ").trim();
-async function worldWorst(n = 3) {
+// plain ASCII for the board's font: accents dropped (Płock -> Plock), other scripts removed
+const LATIN = { "ł": "l", "Ł": "L", "ø": "o", "Ø": "O", "ß": "ss", "đ": "d", "Đ": "D", "æ": "ae", "Æ": "AE", "œ": "oe", "ı": "i" };
+const ascii = (s) => String(s || "").replace(/\([^)]*\)/g, " ").normalize("NFKD").replace(/[̀-ͯ]/g, "")
+  .replace(/[łŁøØßđĐæÆœı]/g, (c) => LATIN[c]).replace(/[^\x20-\x7e]/g, " ").replace(/\s+/g, " ").trim();
+async function worldRank(n = 3) {
   const token = process.env.WAQI_TOKEN;
-  if (!token) return [];
+  if (!token) return { worst: [], best: [] };
   const all = new Map();
   for (let la = -60; la < 75; la += 45)
     for (let lo = -180; lo < 180; lo += 60) {
@@ -141,14 +157,23 @@ async function worldWorst(n = 3) {
     return a > 0 && a < 500 && Number.isFinite(t) && now - t < STALE_H * 3600e3;
   });
   ok.sort((a, b) => parseInt(b.aqi, 10) - parseInt(a.aqi, 10));
-  const cells = new Set(), top = [];
-  for (const x of ok) {
-    const cell = `${Math.round(x.lat)},${Math.round(x.lon)}`;
-    if (cells.has(cell)) continue;
-    cells.add(cell);
-    top.push(x);
-    if (top.length >= n) break;
-  }
+  const pick = (list) => {
+    const cells = new Set(), top = [];
+    for (const x of list) {
+      const cell = `${Math.round(x.lat)},${Math.round(x.lon)}`;
+      if (cells.has(cell)) continue;
+      cells.add(cell);
+      top.push(x);
+      if (top.length >= n) break;
+    }
+    return top;
+  };
+  const worst = await named(pick(ok)), best = await named(pick([...ok].reverse()));
+  console.log(`world: ${all.size} stations, ${ok.length} fresh, worst ${worst.map((w) => w.aqi + " " + w.place).join(" / ")}, best ${best.map((w) => w.aqi + " " + w.place).join(" / ")}`);
+  return { worst, best };
+}
+
+async function named(top) {
   const out = [];
   for (const x of top) {
     // "Station, City, Country" usually; Chinese and some other names have no country:
@@ -166,7 +191,6 @@ async function worldWorst(n = 3) {
     }
     out.push({ aqi: parseInt(x.aqi, 10), place: cut(place, 34) });
   }
-  console.log(`world: ${all.size} stations, ${ok.length} fresh, worst ${out.map((w) => w.aqi + " " + w.place).join(" / ")}`);
   return out;
 }
 
@@ -283,7 +307,7 @@ async function main() {
       pm10: num(a.PM10 && a.PM10.value),
       o3: num(a.O3 && a.O3.value),
       prov: province(st),
-      name: cut(clean(st.nameTH), NAME_MAX),
+      name: cut(shorten(clean(st.nameTH)), NAME_MAX),
       type: st.stationType,
       id: clean(st.stationID),
     });
@@ -298,11 +322,15 @@ async function main() {
   out.push(["U", newest, fresh.length].join("|"));
   out.push(["C", fresh.filter((r) => r.aqi >= 101).length].join("|"));
   for (const r of ranked.slice(0, 3)) out.push(["T", r.aqi, r.pm25, r.prov, r.name].join("|"));
+  // the best: stations that measure PM2.5 (an AQI of 0 came from one that does not)
+  for (const r of ranked.filter((r) => r.aqi > 0 && r.pm25 >= 0).slice(-3).reverse()) out.push(["B", r.aqi, r.pm25, r.prov, r.name].join("|"));
   for (const r of fresh)
     out.push(["S", r.lat.toFixed(4), r.lon.toFixed(4), r.aqi, r.pm25, r.pm10, r.o3, r.when.slice(11, 16), r.prov, r.name, r.id].join("|"));
 
   try {
-    for (const w of await worldWorst()) out.push(["W", w.aqi, w.place].join("|"));
+    const world = await worldRank();
+    for (const w of world.worst) out.push(["W", w.aqi, w.place].join("|"));
+    for (const w of world.best) out.push(["G", w.aqi, w.place].join("|"));
   } catch (e) {
     console.error("world:", e.message); // the Thai part still goes out
   }
