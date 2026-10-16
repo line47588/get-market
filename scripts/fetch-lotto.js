@@ -35,12 +35,13 @@ async function post(url, body, attempts = 3) {
 const nums = (d, key) => ((d && d[key] && d[key].number) || []).map((n) => n.value).filter(Boolean);
 const sorted = (a) => [...a].sort();
 
-// Draws are on the 1st and 16th, moved to the 2nd / 17th / 30th around holidays.
+// Draws are on the 1st and 16th, moved by a day or two around holidays (2nd, 17th, 30 Dec
+// for the New Year draw; rarely the 3rd, 15th, 18th or 31st).
 function* candidateDates(before) {
   let y = before.getUTCFullYear(), m = before.getUTCMonth() + 1;
   const beforeKey = before.toISOString().slice(0, 10);
   for (let k = 0; k < 4; k++) {
-    for (const d of [30, 17, 16, 2, 1]) {
+    for (const d of [31, 30, 18, 17, 16, 15, 3, 2, 1]) {
       const dt = new Date(Date.UTC(y, m - 1, d));
       if (dt.getUTCMonth() !== m - 1) continue; // no 30 Feb
       const key = dt.toISOString().slice(0, 10);
