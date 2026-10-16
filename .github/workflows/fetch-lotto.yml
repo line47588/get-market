@@ -2,9 +2,12 @@ name: Fetch lottery
 
 on:
   workflow_dispatch: {}
+  # GitHub delays scheduled runs by hours at busy times and drops some, most of all at
+  # minutes 0/15/30/45. Odd minutes, a longer window and several daily runs so a missed
+  # draw is picked up on its own (2026-10-16: no draw-day run fired, the board kept 1 Oct).
   schedule:
-    - cron: "*/15 7-10 1,2,16,17,30 * *" # วันออกรางวัล 14:00-17:59 น. ไทย ทุก 15 นาที
-    - cron: "17 0 * * *"                 # วันอื่นวันละครั้ง (07:17 น. ไทย)
+    - cron: "7,22,37,52 7-13 1,2,16,17,30,31 * *" # วันออกรางวัล(+วันถัดไป) 14:00-20:59 น. ไทย ทุก 15 นาที
+    - cron: "43 0,5,11,17 * * *"                  # วันอื่น 4 ครั้งต่อวัน (07:43, 12:43, 18:43, 00:43 น. ไทย)
 
 permissions:
   contents: write
